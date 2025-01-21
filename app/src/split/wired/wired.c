@@ -6,6 +6,7 @@
 
 #include "wired.h"
 
+#include <zephyr/sys/crc.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/logging/log.h>
 
@@ -57,6 +58,7 @@ void zmk_split_wired_poll_in(struct ring_buf *rx_buf, const struct device *uart,
 
 void zmk_split_wired_fifo_read(const struct device *dev, struct ring_buf *buf,
                                struct k_work *process_work) {
+    // TODO: Add error checking on platforms that support it
     uint32_t last_read = 0, len = 0;
     do {
         uint8_t *buffer;
@@ -88,8 +90,6 @@ void zmk_split_wired_fifo_fill(const struct device *dev, struct ring_buf *tx_buf
 
         int sent = uart_fifo_fill(dev, buf, claim_len);
 
-        LOG_DBG("Sent %d to the UART", sent);
-
         ring_buf_get_finish(tx_buf, MAX(sent, 0));
 
         if (sent <= 0) {
@@ -103,3 +103,46 @@ void zmk_split_wired_fifo_fill(const struct device *dev, struct ring_buf *tx_buf
 }
 
 #endif // IS_ENABLED(CONFIG_ZMK_SPLIT_WIRED_UART_MODE_DEFAULT_INTERRUPT)
+
+int zmk_split_wired_get_item(struct ring_buf *rx_buf, uint8_t *env, size_t env_size) {
+    while (ring_buf_size_get(rx_buf) >= env_size) {
+        size_t bytes_left = env_size;
+
+        uint8_t prefix[5] = {0};
+
+        uint32_t peek_read = ring_buf_peek(rx_buf, prefix, 4);
+        __ASSERT(peek_read == 4, "Somehow read less than we expect from the RX buffer");
+
+        if (strcmp(prefix, ZMK_SPLIT_WIRED_ENVELOPE_MAGIC_PREFIX) != 0) {
+            uint8_t discarded_byte;
+            ring_buf_get(rx_buf, &discarded_byte, 1);
+
+            LOG_WRN("Prefix mismatch, discarding byte %0x", discarded_byte);
+
+            continue;
+        }
+
+        while (bytes_left > 0) {
+            size_t read = ring_buf_get(rx_buf, env + (env_size - bytes_left), bytes_left);
+            bytes_left -= read;
+        }
+
+        LOG_HEXDUMP_DBG(env, env_size, "Env data");
+
+        // Avoid unaligned access by copying into our 32-bit integer on the stack
+        uint32_t env_crc;
+        memcpy(&env_crc, env + (env_size - 4), 4);
+
+        // Exclude the trailing 4 bytes that contain the received CRC
+        uint32_t crc = crc32_ieee(env, env_size - 4);
+        if (crc != env_crc) {
+            LOG_WRN("Data corruption in received peripheral event, ignoring %d vs %d", crc,
+                    env_crc);
+            return -EINVAL;
+        }
+
+        return 0;
+    }
+
+    return -EAGAIN;
+}

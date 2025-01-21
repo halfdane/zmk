@@ -11,13 +11,17 @@
 
 #include <zmk/split/transport/types.h>
 
+#define ZMK_SPLIT_WIRED_ENVELOPE_MAGIC_PREFIX "ZmKw"
+
 struct event_envelope {
+    uint8_t magic_prefix[4];
     uint8_t source;
     struct zmk_split_transport_peripheral_event event;
     uint32_t crc;
 } __packed;
 
 struct command_envelope {
+    uint8_t magic_prefix[4];
     uint8_t source;
     struct zmk_split_transport_central_command cmd;
     uint32_t crc;
@@ -39,3 +43,5 @@ void zmk_split_wired_fifo_read(const struct device *dev, struct ring_buf *buf,
 void zmk_split_wired_fifo_fill(const struct device *dev, struct ring_buf *tx_buf);
 
 #endif
+
+int zmk_split_wired_get_item(struct ring_buf *rx_buf, uint8_t *env, size_t env_size);

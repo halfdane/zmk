@@ -170,7 +170,8 @@ static int split_central_bt_send_command(uint8_t source,
         return -ENOSPC;
     }
 
-    struct command_envelope env = {.source = source, .cmd = cmd};
+    struct command_envelope env = {
+        .magic_prefix = ZMK_SPLIT_WIRED_ENVELOPE_MAGIC_PREFIX, .source = source, .cmd = cmd};
 
     env.crc = crc32_ieee((void *)&env, sizeof(env) - 4);
     LOG_DBG("calculated a CRC for %d", env.crc);
@@ -205,23 +206,18 @@ static void publish_events_work(struct k_work *work) {
 
     while (ring_buf_size_get(&state->rx_buf) >= sizeof(struct event_envelope)) {
         struct event_envelope env;
-        size_t bytes_left = sizeof(struct event_envelope);
-
-        while (bytes_left > 0) {
-            size_t read = ring_buf_get(&state->rx_buf, (uint8_t *)&env + (sizeof(env) - bytes_left),
-                                       bytes_left);
-            bytes_left -= read;
+        int item_err = zmk_split_wired_get_item(&state->rx_buf, (uint8_t *)&env,
+                                                sizeof(struct event_envelope));
+        switch (item_err) {
+        case 0:
+            zmk_split_transport_central_peripheral_event_handler(&wired_central, env.source,
+                                                                 env.event);
+            break;
+        case -EAGAIN:
+            break;
+        default:
+            LOG_WRN("Issue fetching an item from the RX buffer: %d", item_err);
+            break;
         }
-
-        LOG_HEXDUMP_DBG(&env, sizeof(env), "Env data");
-
-        // Exclude the trailing 4 bytes that contain the received CRC
-        uint32_t crc = crc32_ieee((uint8_t *)&env, sizeof(env) - 4);
-        if (crc != env.crc) {
-            LOG_WRN("Data corruption in received peripheral event, ignoring");
-            return;
-        }
-
-        zmk_split_transport_central_peripheral_event_handler(&wired_central, env.source, env.event);
     }
 }
