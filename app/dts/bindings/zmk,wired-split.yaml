@@ -1,0 +1,20 @@
+# Copyright (c) 2024 The ZMK Contributors
+# SPDX-License-Identifier: MIT
+
+description: |
+  Complete specification of wired split connetion
+
+compatible: "zmk,wired-split"
+
+properties:
+  device:
+    type: phandle
+    required: true
+    description: The UART device for wired split communication
+
+  half-duplex:
+    type: boolean
+    description: Enable half-duplex protocol mode.
+
+  dir-gpios:
+    type: phandle-array
